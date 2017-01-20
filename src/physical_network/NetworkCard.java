@@ -188,10 +188,14 @@ public class NetworkCard {
 
 				//Take the complement
 				checkSum = (~checkSum) & 0xffff;
+				byte[] checkSumByte =  ByteBuffer.allocate(4).putInt(checkSum).array();
 
-				//transmitt checksum
-				transmitByte((byte) (checkSum / 256));
-				transmitByte((byte) (checkSum & 0xff));
+				//send checksum
+				for (int i = 0; i < 4; i++) {
+					transmitByte(checkSumByte[i]);
+					System.out.println(deviceName + " Checksum BYTE = " + Integer.toHexString(checkSumByte[i] & 0xFF));
+				}
+
 
 				// Append a 0x7E to terminate frame.
         		transmitByte((byte)0x7E);
@@ -273,7 +277,6 @@ public class NetworkCard {
 								count++;
 								length--;
 							}
-							System.out.println(deviceName + " ESCAPED RECEIVED BYTE = " + Integer.toHexString(receivedByte & 0xFF));
 						}else if ((receivedByte & 0xFF) != 0x7E) {
 							if(length>0) {
 								checkSum = calcSum(checkSum, count, receivedByte);
@@ -281,8 +284,6 @@ public class NetworkCard {
 								length--;
 							}
 						}
-						System.out.println("Received CheckSum:"+ Integer.toHexString(checkSum) );
-
 
 						//HEADER
 						if(isForThisCard) {
@@ -293,7 +294,6 @@ public class NetworkCard {
 							}
 							if(bytePayloadIndex==3){
 								length = java.nio.ByteBuffer.wrap(lengthByte).getInt();
-								System.out.println("Lenght of message is: "+length);
 							}
 
 							//source
@@ -302,7 +302,6 @@ public class NetworkCard {
 							}
 							if(bytePayloadIndex==7){
 								int source = java.nio.ByteBuffer.wrap(sourceByte).getInt();
-								System.out.println("Source is: "+source);
 							}
 
 							// destination
@@ -314,7 +313,7 @@ public class NetworkCard {
 								if(destination == deviceNumber){
 									System.out.println("Message is for me! (I am "+deviceName+" )");
 								} else{
-									System.out.println("Message ain't for me! (I am "+deviceName+" )");
+									System.out.println("Message isn't for me! (I am "+deviceName+" )");
 									isForThisCard = false;
 								}
 							}
@@ -328,6 +327,8 @@ public class NetworkCard {
 									if (bytePayloadIndex > 11 && (receivedByte & 0xFF) != 0x7E) {
 										System.out.println(deviceName + " ADDED BYTE = " + Integer.toHexString(receivedByte & 0xFF));
 										bytePayload[bytePayloadIndex - 12] = receivedByte;
+										System.out.println("--Byte added: "+Integer.toHexString(receivedByte & 0xFF)+"at pos"+(bytePayloadIndex-12));
+										System.out.println();
 									}
 									bytePayloadIndex++;
 								}
@@ -339,20 +340,29 @@ public class NetworkCard {
 	        		// Block receiving data if queue full.
 					if(isForThisCard ) {
 						//control checkSum
-						byte receivedCheckSum[] = new byte[2];
-						receivedCheckSum[0] = bytePayload[bytePayloadIndex-2];
-						receivedCheckSum[1] = bytePayload[bytePayloadIndex-1];
+						byte[] checkSumByte = new byte[4];
+						checkSumByte[0] = bytePayload[bytePayloadIndex - 16];
+						System.out.println("-------");
+						System.out.println(deviceName + " ADDED BYTE = " + Integer.toHexString(bytePayload[bytePayloadIndex - 16] & 0xFF));
+						checkSumByte[1] = bytePayload[bytePayloadIndex - 15];
+						System.out.println(deviceName + " ADDED BYTE = " + Integer.toHexString(bytePayload[bytePayloadIndex - 15] & 0xFF));
+						checkSumByte[2] = bytePayload[bytePayloadIndex - 14];
+						System.out.println(deviceName + " ADDED BYTE = " + Integer.toHexString(bytePayload[bytePayloadIndex - 14] & 0xFF));
+						checkSumByte[3] = bytePayload[bytePayloadIndex -13] ;
+						System.out.println(deviceName + " ADDED BYTE = " + Integer.toHexString(bytePayload[bytePayloadIndex -13] & 0xFF));
+						System.out.println("-------");
 
-						int calculatedCheckSum = calcSum(0,0,receivedCheckSum[0]);
-						calculatedCheckSum = calcSum(calculatedCheckSum,1,receivedCheckSum[1]);
 
-						if(calculatedCheckSum + checkSum == 0xffff){
+						int checkSumReceived = java.nio.ByteBuffer.wrap(checkSumByte).getInt();
+
+						if(checkSumReceived + checkSum == 0xffff){
 							System.out.println("Not Corrupted!");
-							//inputQueue.put(new DataFrame(Arrays.copyOfRange(bytePayload, 0, bytePayloadIndex-14)));
+							inputQueue.put(new DataFrame(Arrays.copyOfRange(bytePayload, 0, bytePayloadIndex-16)));
+						} else {
+							System.out.println("-- Error while transmitting: MSG Corrupted --");
 						}
 
-						//todel and uncomment above
-						inputQueue.put(new DataFrame(Arrays.copyOfRange(bytePayload, 0, bytePayloadIndex-14)));
+
 					}
 	    		}
 
