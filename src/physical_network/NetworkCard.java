@@ -8,6 +8,9 @@
 
 package physical_network;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.concurrent.*;
 
@@ -56,14 +59,7 @@ public class NetworkCard {
     
     // Receiver thread.
     private Thread rxThread;
-    
-    /**
-     * NetworkCard constructor.
-     * @param deviceName This provides the name of this device, i.e. "Network Card A".
-     * @param wire       This is the shared wire that this network card is connected to.
-     * @param listener   A data frame listener that should be informed when data frames are received.
-     *                   (May be set to 'null' if network card should not respond to data frames.)
-     */
+
     public NetworkCard(int number, TwistedWirePair wire) {
     	
     	this.deviceNumber = number;
@@ -92,6 +88,18 @@ public class NetworkCard {
     	return data;
     }
 
+	private int calcSum(int checkSum, int count, byte b){
+		//Since we do a 16-bits checksum
+		if (count%2==0 ) {
+			//if even
+			checkSum = (checkSum + b * 256) & 0xffff; //deuxieme byte shifte de 8 bits (pour faire 16)
+		} else{
+			// else odd
+			checkSum = (checkSum + b) & 0xffff;
+		}
+		return checkSum;
+	}
+
     /*
      * Private inner thread class that transmits data.
      */
@@ -104,8 +112,12 @@ public class NetworkCard {
 	    			
 	    			// Blocks if nothing is in queue.
 	    			DataFrame frame = outputQueue.take();
-	    			transmitFrame(frame);
-	    		}
+					try {
+						transmitFrame(frame);
+					} catch (IOException e) {
+						e.printStackTrace();
+					}
+				}
     		} catch (InterruptedException except) {
     			System.out.println(deviceName + " Transmitter Thread Interrupted - terminated.");
     		}
@@ -118,27 +130,70 @@ public class NetworkCard {
          * 
          * @param frame  Data frame to transmit across the network.
          */
-        public void transmitFrame(DataFrame frame) throws InterruptedException {
-        	
+        public void transmitFrame(DataFrame frame) throws InterruptedException, IOException {
+
     		if (frame != null) {
-    			
+
+				int checkSum = 0;
+				int count = 0;
+				int length = 0;
+
     			// Low voltage signal to get ready ...
     			wire.setVoltage(deviceName, LOW_VOLTAGE);
     			sleep(PULSE_WIDTH*4);
-    			
-    			byte[] payload = frame.getTransmittedBytes();
-    			
+
+				//add source to header
+				byte[] sourceByte =  ByteBuffer.allocate(4).putInt(deviceNumber).array();
+
+				ByteArrayOutputStream tempOutputStream = new ByteArrayOutputStream( );
+				tempOutputStream.write( sourceByte );
+				tempOutputStream.write( frame.getTransmittedBytes());
+
+				byte[] payload = tempOutputStream.toByteArray();
+
+				//add length to header
+				length = payload.length;
+				byte[] lengthByte =  ByteBuffer.allocate(4).putInt(length).array();
+
+				ByteArrayOutputStream outputStream = new ByteArrayOutputStream( );
+				outputStream.write( lengthByte );
+				outputStream.write( payload);
+
+				payload = outputStream.toByteArray();
+
+
+				//  [Length|Source|Destination|Message]
+				//     4       4        4         X
+
     			// Send bytes in asynchronous style with 0.2 seconds gaps between them.
     			for (int i = 0; i < payload.length; i++) {
-    				
-    	    		// Byte stuff if required.
-    	    		if (payload[i] == 0x7E || payload[i] == 0x7D)
-    	    			transmitByte((byte)0x7D);
+
+
+					// Byte stuff if required.
+    	    		if (payload[i] == 0x7E || payload[i] == 0x7D) {
+						transmitByte((byte) 0x7D);
+						if(i>3) {
+							checkSum = calcSum(checkSum, count, (byte) 0x7D);
+							count++;
+						}
+					}
     	    		
     	    		transmitByte(payload[i]);
-    			}
-    			
-    			// Append a 0x7E to terminate frame.
+					if(i>3) {
+						checkSum = calcSum(checkSum, count, payload[i]);
+						count++;
+					}
+					System.out.println("Transmit CheckSum:" + Integer.toHexString(checkSum));
+				}
+
+				//Take the complement
+				checkSum = (~checkSum) & 0xffff;
+
+				//transmitt checksum
+				transmitByte((byte) (checkSum / 256));
+				transmitByte((byte) (checkSum & 0xff));
+
+				// Append a 0x7E to terminate frame.
         		transmitByte((byte)0x7E);
     		}
 
@@ -189,28 +244,116 @@ public class NetworkCard {
 	    			byte[] bytePayload = new byte[MAX_PAYLOAD_SIZE];
 	    			int bytePayloadIndex = 0;
 		    		byte receivedByte;
+
+					byte[] lengthByte = new byte[4];
+					byte[] destinationByte = new byte[4];
+					byte[] sourceByte = new byte[4];
+
+					boolean isForThisCard = true;
+					int checkSum = 0;
+					int count = 0;
+					int length = 0;
 	    			
 	        		do {
-	        			
+
 	        			receivedByte = receiveByte();
-	        			
-	        			System.out.println(deviceName + " RECEIVED BYTE = " + Integer.toHexString(receivedByte & 0xFF));
-	        			
-	        			if ((receivedByte & 0xFF) != 0x7E) {
-	            			// Unstuff if escaped.        			
-		        			if (receivedByte == 0x7D) {
-		        				receivedByte = receiveByte();
-		        				System.out.println(deviceName + " ESCAPED RECEIVED BYTE = " + Integer.toHexString(receivedByte & 0xFF));
-		        			}
-		        			
-		        			bytePayload[bytePayloadIndex] = receivedByte;
-		        			bytePayloadIndex++;
-	        			}
+
+
+						//handle escape byte + calcSum
+
+						if ((receivedByte & 0xFF) == 0x7D) {
+							if(length>0) {
+								checkSum = calcSum(checkSum, count, receivedByte);
+								count++;
+								length--;
+							}
+							receivedByte = receiveByte();
+							if(length>0) {
+								checkSum = calcSum(checkSum, count, receivedByte);
+								count++;
+								length--;
+							}
+							System.out.println(deviceName + " ESCAPED RECEIVED BYTE = " + Integer.toHexString(receivedByte & 0xFF));
+						}else if ((receivedByte & 0xFF) != 0x7E) {
+							if(length>0) {
+								checkSum = calcSum(checkSum, count, receivedByte);
+								count++;
+								length--;
+							}
+						}
+						System.out.println("Received CheckSum:"+ Integer.toHexString(checkSum) );
+
+
+						//HEADER
+						if(isForThisCard) {
+
+							//length
+							if(bytePayloadIndex<4){
+								lengthByte[bytePayloadIndex] = receivedByte;
+							}
+							if(bytePayloadIndex==3){
+								length = java.nio.ByteBuffer.wrap(lengthByte).getInt();
+								System.out.println("Lenght of message is: "+length);
+							}
+
+							//source
+							if(3<bytePayloadIndex && bytePayloadIndex<8){
+								sourceByte[bytePayloadIndex-4] = receivedByte;
+							}
+							if(bytePayloadIndex==7){
+								int source = java.nio.ByteBuffer.wrap(sourceByte).getInt();
+								System.out.println("Source is: "+source);
+							}
+
+							// destination
+							if(7<bytePayloadIndex && bytePayloadIndex<12){
+								destinationByte[bytePayloadIndex-8] = receivedByte;
+							}
+							if(bytePayloadIndex==11){
+								int destination = java.nio.ByteBuffer.wrap(destinationByte).getInt();
+								if(destination == deviceNumber){
+									System.out.println("Message is for me! (I am "+deviceName+" )");
+								} else{
+									System.out.println("Message ain't for me! (I am "+deviceName+" )");
+									isForThisCard = false;
+								}
+							}
+							// MESSAGE
+							if (isForThisCard){
+								System.out.println(deviceName + " RECEIVED BYTE = " + Integer.toHexString(receivedByte & 0xFF));
+
+								if ((receivedByte & 0xFF) != 0x7E) {
+									// Unstuff if escaped.
+
+									if (bytePayloadIndex > 11 && (receivedByte & 0xFF) != 0x7E) {
+										System.out.println(deviceName + " ADDED BYTE = " + Integer.toHexString(receivedByte & 0xFF));
+										bytePayload[bytePayloadIndex - 12] = receivedByte;
+									}
+									bytePayloadIndex++;
+								}
+							}
+						}
 	        			
 	        		} while ((receivedByte & 0xFF) != 0x7E);
 	        			        		
 	        		// Block receiving data if queue full.
-	        		inputQueue.put(new DataFrame(Arrays.copyOfRange(bytePayload, 0, bytePayloadIndex)));
+					if(isForThisCard ) {
+						//control checkSum
+						byte receivedCheckSum[] = new byte[2];
+						receivedCheckSum[0] = bytePayload[bytePayloadIndex-2];
+						receivedCheckSum[1] = bytePayload[bytePayloadIndex-1];
+
+						int calculatedCheckSum = calcSum(0,0,receivedCheckSum[0]);
+						calculatedCheckSum = calcSum(calculatedCheckSum,1,receivedCheckSum[1]);
+
+						if(calculatedCheckSum + checkSum == 0xffff){
+							System.out.println("Not Corrupted!");
+							//inputQueue.put(new DataFrame(Arrays.copyOfRange(bytePayload, 0, bytePayloadIndex-14)));
+						}
+
+						//todel and uncomment above
+						inputQueue.put(new DataFrame(Arrays.copyOfRange(bytePayload, 0, bytePayloadIndex-14)));
+					}
 	    		}
 
             } catch (InterruptedException except) {

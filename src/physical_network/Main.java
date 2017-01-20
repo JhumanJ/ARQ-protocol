@@ -33,20 +33,25 @@ public class Main {
      */
     public static void main(String[] args) throws InterruptedException {
 
+//        Integer.toHexString(10);
+//        int i = (char)0xA;
+//        System.out.printf(String.valueOf(i));
+
+
     	// Shared twisted pair wire.
         TwistedWirePair wire = new MyTwistedWirePair();
 
         // Set network card 1 running connected to the shared wire.
         NetworkCard networkCard1 = new NetworkCard(1, wire);
         networkCard1.init();
-        
+
         // Set network card 2 running with a simple data frame listener registered.
         NetworkCard networkCard2 = new NetworkCard(2, wire);
         networkCard2.init();
 
         // Currently noise level is set to 0.0 volts on wire (the 0.0 value).
         // Try increasing it to 3.5 volts to see if the transmission is reliable.
-        ThermalNoise thermalNoise = new ThermalNoise("Thermal Noise", 3.5, wire);
+        ThermalNoise thermalNoise = new ThermalNoise("Thermal Noise", 0.0, wire);
         thermalNoise.start();
 
         // Set oscilloscope monitoring the wire voltage.
@@ -68,10 +73,10 @@ public class Main {
 
         // Continuously read data frames received by network card 2.
         while (true) {
-        	
+
         	DataFrame receivedData = networkCard2.receive();
         	System.out.println("\n *** RECEIVED: " + receivedData + "\n");
-        	
+
         }
         
     }

@@ -8,6 +8,10 @@
 
 package physical_network;
 
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.io.ByteArrayOutputStream;
+
 /**
  * Encapsulates the data for a network 'data frame'.
  * At the moment this just includes a payload byte array.
@@ -21,7 +25,7 @@ public class DataFrame {
 	
 	public final byte[] payload;
 	private int destination = 0;
-		
+
 	public DataFrame(String payload) {
 		this.payload = payload.getBytes();
 	}
@@ -39,7 +43,7 @@ public class DataFrame {
 		this.payload = payload;
 		this.destination = destination;
 	}
-	
+
 	public int getDestination() {
 		return destination;
 	}
@@ -71,9 +75,21 @@ public class DataFrame {
 	 * to be implemented since this is carried out as the data
 	 * frame is transmitted and received.
 	 */
-	public byte[] getTransmittedBytes() {
-		return payload;
-	}	
-	
+	public byte[] getTransmittedBytes() throws IOException {
+
+		byte[] destinationByte =  ByteBuffer.allocate(4).putInt(this.destination).array();
+
+		ByteArrayOutputStream outputStream = new ByteArrayOutputStream( );
+		outputStream.write( destinationByte );
+		outputStream.write( this.getPayload() );
+
+		byte result[] = outputStream.toByteArray();
+
+		return result;
+	}
+
+
+
+
 }
 
