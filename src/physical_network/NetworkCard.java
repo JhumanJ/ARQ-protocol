@@ -145,7 +145,7 @@ public class NetworkCard {
 				//add source to header
 				byte[] sourceByte =  ByteBuffer.allocate(4).putInt(deviceNumber).array();
 
-				ByteArrayOutputStream tempOutputStream = new ByteArrayOutputStream( );
+				ByteArrayOutputStream tempOutputStream = new ByteArrayOutputStream();
 				tempOutputStream.write( sourceByte );
 				tempOutputStream.write( frame.getTransmittedBytes());
 
@@ -162,8 +162,8 @@ public class NetworkCard {
 				payload = outputStream.toByteArray();
 
 
-				//  [Length|Source|Destination|Message]
-				//     4       4        4         X
+				//  [Length|Source|Destination|Message|Checksum]
+				//     4       4        4         X        4
 
     			// Send bytes in asynchronous style with 0.2 seconds gaps between them.
     			for (int i = 0; i < payload.length; i++) {
@@ -183,17 +183,18 @@ public class NetworkCard {
 						checkSum = calcSum(checkSum, count, payload[i]);
 						count++;
 					}
-					System.out.println("Transmit CheckSum:" + Integer.toHexString(checkSum));
 				}
 
 				//Take the complement
+				System.out.println(deviceName+": Checksum:"+checkSum);
 				checkSum = (~checkSum) & 0xffff;
+				System.out.println(deviceName+": Checksum emitted (complement):"+checkSum);
+
 				byte[] checkSumByte =  ByteBuffer.allocate(4).putInt(checkSum).array();
 
 				//send checksum
 				for (int i = 0; i < 4; i++) {
 					transmitByte(checkSumByte[i]);
-					System.out.println(deviceName + " Checksum BYTE = " + Integer.toHexString(checkSumByte[i] & 0xFF));
 				}
 
 
@@ -257,8 +258,8 @@ public class NetworkCard {
 					int checkSum = 0;
 					int count = 0;
 					int length = 0;
-	    			
-	        		do {
+
+					while (true) {
 
 	        			receivedByte = receiveByte();
 
@@ -319,41 +320,36 @@ public class NetworkCard {
 							}
 							// MESSAGE
 							if (isForThisCard){
-								System.out.println(deviceName + " RECEIVED BYTE = " + Integer.toHexString(receivedByte & 0xFF));
 
-								if ((receivedByte & 0xFF) != 0x7E) {
+								if ((receivedByte & 0xFF) == 0x7E) break; {
 									// Unstuff if escaped.
 
 									if (bytePayloadIndex > 11 && (receivedByte & 0xFF) != 0x7E) {
-										System.out.println(deviceName + " ADDED BYTE = " + Integer.toHexString(receivedByte & 0xFF));
 										bytePayload[bytePayloadIndex - 12] = receivedByte;
-										System.out.println("--Byte added: "+Integer.toHexString(receivedByte & 0xFF)+"at pos"+(bytePayloadIndex-12));
-										System.out.println();
+										System.out.println("Byte added: "+Integer.toHexString(receivedByte & 0xFF)+" at pos "+(bytePayloadIndex-12));
 									}
 									bytePayloadIndex++;
 								}
+
+
 							}
 						}
 	        			
-	        		} while ((receivedByte & 0xFF) != 0x7E);
+	        		};
 	        			        		
 	        		// Block receiving data if queue full.
 					if(isForThisCard ) {
 						//control checkSum
 						byte[] checkSumByte = new byte[4];
 						checkSumByte[0] = bytePayload[bytePayloadIndex - 16];
-						System.out.println("-------");
-						System.out.println(deviceName + " ADDED BYTE = " + Integer.toHexString(bytePayload[bytePayloadIndex - 16] & 0xFF));
 						checkSumByte[1] = bytePayload[bytePayloadIndex - 15];
-						System.out.println(deviceName + " ADDED BYTE = " + Integer.toHexString(bytePayload[bytePayloadIndex - 15] & 0xFF));
 						checkSumByte[2] = bytePayload[bytePayloadIndex - 14];
-						System.out.println(deviceName + " ADDED BYTE = " + Integer.toHexString(bytePayload[bytePayloadIndex - 14] & 0xFF));
 						checkSumByte[3] = bytePayload[bytePayloadIndex -13] ;
-						System.out.println(deviceName + " ADDED BYTE = " + Integer.toHexString(bytePayload[bytePayloadIndex -13] & 0xFF));
-						System.out.println("-------");
-
 
 						int checkSumReceived = java.nio.ByteBuffer.wrap(checkSumByte).getInt();
+						System.out.println(deviceName+": Checksum received:"+checkSumReceived);
+						System.out.println(deviceName+": Checksum calculated:"+checkSum);
+
 
 						if(checkSumReceived + checkSum == 0xffff){
 							System.out.println("Not Corrupted!");

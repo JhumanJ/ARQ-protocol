@@ -33,11 +33,6 @@ public class Main {
      */
     public static void main(String[] args) throws InterruptedException {
 
-//        Integer.toHexString(10);
-//        int i = (char)0xA;
-//        System.out.printf(String.valueOf(i));
-
-
     	// Shared twisted pair wire.
         TwistedWirePair wire = new MyTwistedWirePair();
 
@@ -59,15 +54,19 @@ public class Main {
         oscilloscope.start();
 
         // Send a data frame across the link from network card 1 to network card 2.
-        DataFrame myMessage = new DataFrame("Hello World", 2);
+        //DataFrame myMessage = new DataFrame("Hello World", 2);
+        DataFrame myMessage = new DataFrame("Hi", 2);
+
         System.out.println("\n *** SENDING DATA FRAME: " + myMessage + "\n");
         networkCard1.send(myMessage);
 
-        myMessage = new DataFrame("Earth calling Mars", 2);
+        myMessage = new DataFrame("Hey", 2);
+        //myMessage = new DataFrame("Earth calling Mars", 2);
         System.out.println("\n *** SENDING DATA FRAME: " + myMessage + "\n");
         networkCard1.send(myMessage);
 
-        myMessage = new DataFrame("Hello Mars", 2);
+//        myMessage = new DataFrame("Hello Mars", 2);
+        myMessage = new DataFrame("Cool", 2);
         System.out.println("\n *** SENDING DATA FRAME: " + myMessage + "\n");
         networkCard1.send(myMessage);
 
