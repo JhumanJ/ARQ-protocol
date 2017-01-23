@@ -25,6 +25,7 @@ public class DataFrame {
 	
 	public final byte[] payload;
 	private int destination = 0;
+	private boolean isACK = false;
 
 	public DataFrame(String payload) {
 		this.payload = payload.getBytes();
@@ -42,6 +43,11 @@ public class DataFrame {
 	public DataFrame(byte[] payload, int destination) {
 		this.payload = payload;
 		this.destination = destination;
+	}
+
+	public DataFrame(byte[] payload, boolean isACK) {
+		this.payload = payload;
+		this.isACK = isACK;
 	}
 
 	public int getDestination() {
@@ -76,6 +82,10 @@ public class DataFrame {
 	 * frame is transmitted and received.
 	 */
 	public byte[] getTransmittedBytes() throws IOException {
+
+		if (isACK){
+			return this.getPayload();
+		}
 
 		byte[] destinationByte =  ByteBuffer.allocate(4).putInt(this.destination).array();
 

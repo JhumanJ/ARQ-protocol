@@ -65,6 +65,11 @@ public class NetworkCard {
 	private int toSendTransmission = 0; //0 or 1
 	private boolean ACKOK = false;
 
+	private byte[] sendAck = new byte[3];
+
+	//for testing purposes
+	private int byteFlip = 0;
+
 
     public NetworkCard(int number, TwistedWirePair wire) {
     	
@@ -136,110 +141,143 @@ public class NetworkCard {
          * 
          * @param frame  Data frame to transmit across the network.
          */
-		public void transmitACK(byte[] ACK) throws InterruptedException {
-			for (int i = 0; i < ACK.length; i++) {
-				if (ACK[i] == 0x7E || ACK[i] == 0x7D) {
-					System.out.println("Sending - Escape char in ACK at pos: "+i);
-					transmitByte((byte) 0x7D);
-				}
-
-				transmitByte(ACK[i]);
-			}
-		}
 
         public void transmitFrame(DataFrame frame) throws InterruptedException, IOException {
 
+			byteFlip++;
+
+			System.out.println("--"+deviceName+": New Frame--");
+
     		if (frame != null) {
 
-				int checkSum = 0;
-				int count = 0;
-				int length = 0;
+				boolean SendingAACK = true;
 
-    			// Low voltage signal to get ready ...
-    			wire.setVoltage(deviceName, LOW_VOLTAGE);
-    			sleep(PULSE_WIDTH*4);
+				do {
 
-				//add source to header
-				byte[] sourceByte =  ByteBuffer.allocate(4).putInt(deviceNumber).array();
+					wire.setVoltage(deviceName,  0);
 
-				ByteArrayOutputStream tempOutputStream = new ByteArrayOutputStream( );
-				tempOutputStream.write( sourceByte );
-				tempOutputStream.write( frame.getTransmittedBytes());
+					System.out.println(deviceName + "AWAKE");
+					int checkSum = 0;
+					int count = 0;
+					int length = 0;
 
-				byte[] payload = tempOutputStream.toByteArray();
+					// Low voltage signal to get ready ...
+					wire.setVoltage(deviceName, LOW_VOLTAGE);
+					sleep(PULSE_WIDTH * 4);
 
-				//add length to header
-				length = payload.length;
-				byte[] lengthByte =  ByteBuffer.allocate(4).putInt(length).array();
-				byte[] transmissionByte = new byte[1];
-				transmissionByte[0] = (byte) toSendTransmission;
+					//add source to header
+					byte[] payload = frame.getTransmittedBytes();
 
-				ByteArrayOutputStream outputStream = new ByteArrayOutputStream( );
-				outputStream.write( transmissionByte );
-				outputStream.write( lengthByte );
-				outputStream.write( payload);
+					if (payload.length > 2) {
+						SendingAACK = false;
+						byte[] sourceByte = ByteBuffer.allocate(4).putInt(deviceNumber).array();
 
-				payload = outputStream.toByteArray();
+						ByteArrayOutputStream tempOutputStream = new ByteArrayOutputStream();
+						tempOutputStream.write(sourceByte);
+						tempOutputStream.write(payload);
 
+						payload = tempOutputStream.toByteArray();
 
-				//  [TransmisisonByte|Length|Source|Destination|Message|Checksum]
-				//            1          4       4        4         X        2
+						//add length to header
+						length = payload.length;
+						byte[] lengthByte = ByteBuffer.allocate(4).putInt(length).array();
+						byte[] transmissionByte = new byte[1];
+						transmissionByte[0] = (byte) toSendTransmission;
 
-    			// Send bytes in asynchronous style with 0.2 seconds gaps between them.
-    			for (int i = 0; i < payload.length; i++) {
+						ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+						outputStream.write(transmissionByte);
+						outputStream.write(lengthByte);
+						outputStream.write(payload);
 
-					if (0<i && i<=4){
-						System.out.println("Emit lenght byte: "+Integer.toHexString(payload[i] & 0xFF));
+						payload = outputStream.toByteArray();
 					}
-					// Byte stuff if required.
-    	    		if (payload[i] == 0x7E || payload[i] == 0x7D) {
-						System.out.println("Sending - Escape char at pos: "+i);
-						transmitByte((byte) 0x7D);
-						if(i>4) {
-							checkSum = calcSum(checkSum, count, (byte) 0x7D);
+
+
+					//  [TransmisisonByte|Length|Source|Destination|Message|Checksum]
+					//            1          4       4        4         X        2
+
+					// Send bytes in asynchronous style with 0.2 seconds gaps between them.
+					for (int i = 0; i < payload.length; i++) {
+
+						if (SendingAACK) {
+							System.out.println("Sending Ack at pos:" + i);
+						}
+
+						// Byte stuff if required.
+						if (payload[i] == 0x7E || payload[i] == 0x7D) {
+							System.out.println("Sending - Escape char at pos: " + i);
+							transmitByte((byte) 0x7D);
+							if (i > 4) {
+								checkSum = calcSum(checkSum, count, (byte) 0x7D);
+								count++;
+							}
+						}
+
+						if (i == 11 && byteFlip % 2 == 0) {
+							System.out.println("Emit Corrupted Char");
+							transmitByte((byte) 13);
+						} else {
+							transmitByte(payload[i]);
+
+						}
+
+						if (i > 4) {
+							checkSum = calcSum(checkSum, count, payload[i]);
 							count++;
 						}
 					}
-    	    		
-    	    		transmitByte(payload[i]);
-					if(i>4) {
-						checkSum = calcSum(checkSum, count, payload[i]);
-						count++;
+
+					if (!SendingAACK) {
+						//Take the complement
+						System.out.println(deviceName + ": Checksum:" + checkSum);
+						checkSum = (~checkSum) & 0xffff;
+						System.out.println(deviceName + ": Checksum emitted (complement):" + checkSum);
+
+						byte[] checkSumByte = ByteBuffer.allocate(4).putInt(checkSum).array();
+
+						//send checksum
+						for (int i = 0; i < 4; i++) {
+							if (checkSumByte[i] == 0x7E || checkSumByte[i] == 0x7D) {
+								System.out.println("Sending - Escape char at pos: " + i);
+								transmitByte((byte) 0x7D);
+							}
+
+							transmitByte(checkSumByte[i]);
+						}
+
+
+						// Append a 0x7E to terminate frame.
+
 					}
-				}
+					transmitByte((byte) 0x7E);
 
-				//Take the complement
-				System.out.println(deviceName+": Checksum:"+checkSum);
-				checkSum = (~checkSum) & 0xffff;
-				System.out.println(deviceName+": Checksum emitted (complement):"+checkSum);
 
-				byte[] checkSumByte =  ByteBuffer.allocate(4).putInt(checkSum).array();
-
-				//send checksum
-				for (int i = 0; i < 4; i++) {
-					if (checkSumByte[i] == 0x7E || checkSumByte[i] == 0x7D) {
-						System.out.println("Sending - Escape char at pos: "+i);
-						transmitByte((byte) 0x7D);
+					if (!SendingAACK) {
+						System.out.println("--" + deviceName + " Sleep for ACK--");
+						wire.setVoltage(deviceName,  0);
+						sleep(20000);
+						wire.setVoltage(deviceName,  0);
 					}
 
-					transmitByte(checkSumByte[i]);
+					wire.setVoltage(deviceName,  0);
+				} while (!ACKOK && !SendingAACK);
+
+
+				synchronized (this){
+					ACKOK = false;
 				}
+				System.out.println("--" + deviceName + " End of Frame--");
+				wire.setVoltage(deviceName,  0);
+
+			}
 
 
-				// Append a 0x7E to terminate frame.
-        		transmitByte((byte)0x7E);
-
-				sleep(5000);
-    		}
-
-
-
+			wire.setVoltage(deviceName,  0);
     		
         }
         
     	private void transmitByte(byte value) throws InterruptedException {
-
-    		// Low voltage signal ...
+			// Low voltage signal ...
     		wire.setVoltage(deviceName, LOW_VOLTAGE);
     		sleep(PULSE_WIDTH*4);
 
@@ -272,18 +310,20 @@ public class NetworkCard {
     	
     	public void run() {
 
-			System.out.println("Start thread:" + deviceName);
-
         	try {
         		
     			// Listen for data frames.
         		
 	    		while (true) {  // messages
 
-	    			byte[] bytePayload = new byte[MAX_PAYLOAD_SIZE];
+					System.out.println(deviceName+": new receiving loop");
+
+
+					byte[] bytePayload = new byte[MAX_PAYLOAD_SIZE];
 	    			int bytePayloadIndex = 0;
 		    		byte receivedByte;
 					int receivedTransmission = -1;
+					int ACKDestination = -1;
 
 					byte[] lengthByte = new byte[4];
 					byte[] destinationByte = new byte[4];
@@ -299,14 +339,17 @@ public class NetworkCard {
 
 	        		while(true) {  // bytes
 
-	        			receivedByte = receiveByte();
+						receivedByte = receiveByte();
 
 						if (bytePayloadIndex==0 && (receivedByte & 0xFF) != 0x7E){
 							receivedTransmission = (int) (receivedByte & 0xFF);
+
 							if ((receivedTransmission & 0xfe)!=0){
 								//corrupted ack (!= 0 and !=1)
 								isForThisCard = false;
 								System.out.println("Transmission byte corrupted.");
+							}else{
+								System.out.println(deviceName+ ": Received transmission byte: "+ receivedTransmission);
 							}
 							receivedByte = receiveByte();
 						}
@@ -314,27 +357,30 @@ public class NetworkCard {
 //						System.out.println(deviceName+ ": BytePayloadIndex: "+bytePayloadIndex);
 
 						if ((receivedByte & 0xFF) == 0x7E){
-							if (bytePayloadIndex==2){
+							if (bytePayloadIndex==1){
 								//IF IS ACK
-								if ((int)(lengthByte[0] & 0xff) == deviceNumber){
+								if (ACKDestination == deviceNumber){
 									//ACK is for me
 									if (receivedTransmission == toSendTransmission){
 										//Sender Receives ACK
-										isForThisCard = false; //No need to go through treatment.
 										synchronized(this){  //Lock the var
 											ACKOK = true;
 										}
+										toSendTransmission = 1-toSendTransmission;
+										System.out.println("Receive ACK");
 									}
+									isForThisCard = false; //No need to go through treatment.
+
 								}
 							}
 							break;
 						}
 
-						//IF NOT ACK
-						if (bytePayloadIndex==2 && receivedTransmission != myTransmission){
-							//if transmission byte wrong, ignore (or duplicata)
-							isForThisCard = false;
+						if(bytePayloadIndex==0){
+							ACKDestination = (int) receivedByte & 0xff;
+							System.out.println(deviceName+": ACKDestination: "+ACKDestination);
 						}
+
 
 						//handle escape byte + calcSum
 
@@ -360,11 +406,11 @@ public class NetworkCard {
 							//length
 							if(bytePayloadIndex<4){
 								lengthByte[bytePayloadIndex] = receivedByte;
-								System.out.println(deviceName + ": Add byt to lenghtByte: "+Integer.toHexString(receivedByte & 0xFF)+" at index: "+bytePayloadIndex);
+//								System.out.println(deviceName + ": Add byt to lenghtByte: "+Integer.toHexString(receivedByte & 0xFF)+" at index: "+bytePayloadIndex);
 							}
 							if(bytePayloadIndex==3){
 								length = java.nio.ByteBuffer.wrap(lengthByte).getInt();
-								System.out.println(deviceName +" - Length: "+length);
+//								System.out.println(deviceName +" - Length: "+length);
 							}
 
 							//source
@@ -403,7 +449,7 @@ public class NetworkCard {
 	        		} //end - while
 	        			        		
 	        		// Block receiving data if queue full.
-					if(isForThisCard) {
+					if(isForThisCard && !ACKOK) {
 						//control checkSum
 						byte[] checkSumByte = new byte[4];
 						checkSumByte[0] = bytePayload[bytePayloadIndex - 16];
@@ -424,21 +470,24 @@ public class NetworkCard {
 							//ACK :   [transmissionByte|destination|end]
 							//				1				  1		 1
 
-							byte[] ACK = new byte[3];
+							byte[] ACK = new byte[2];
 
 							ByteArrayOutputStream outputStream = new ByteArrayOutputStream( );
 							outputStream.write( myTransmission );
 							outputStream.write( source );
-							outputStream.write( (byte) 0x7E );
 
 							ACK = outputStream.toByteArray();
 
 							//Inverse myTransmission;
-							if (myTransmission==0) myTransmission=1;
-							if (myTransmission==1) myTransmission=0;
-
+							synchronized(this) {
+								myTransmission = 1 - myTransmission;
+							}
 							//Transmit ACK
+							DataFrame toSendFrame = new DataFrame(ACK,true);
 
+
+							outputQueue.put(toSendFrame);
+							System.out.println("ACK Sent");
 
 						} else {
 							System.out.println("-- Error while transmitting: MSG Corrupted --");
@@ -446,7 +495,7 @@ public class NetworkCard {
 
 
 					}
-	    		}
+				}
 
             } catch (InterruptedException except) {
                 System.out.println(deviceName + " Interrupted: " + getName());
