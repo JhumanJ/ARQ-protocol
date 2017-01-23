@@ -46,7 +46,7 @@ public class Main {
 
         // Currently noise level is set to 0.0 volts on wire (the 0.0 value).
         // Try increasing it to 3.5 volts to see if the transmission is reliable.
-        ThermalNoise thermalNoise = new ThermalNoise("Thermal Noise", 0.0, wire);
+        ThermalNoise thermalNoise = new ThermalNoise("Thermal Noise", 2.0, wire);
         thermalNoise.start();
 
         // Set oscilloscope monitoring the wire voltage.
